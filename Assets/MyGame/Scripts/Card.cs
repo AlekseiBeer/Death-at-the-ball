@@ -1,14 +1,38 @@
 using System.Collections;
-using Unity.VisualScripting;
+using System.Collections.Generic;
 using UnityEngine;
 using UnityEngine.EventSystems;
+
+public enum CardStatus
+{
+    Closed,    // Карта закрыта (лицо вниз)
+    Closing,
+    Opened,    // Карта открыта (лицо вверх)
+    Opening
+}
+
+public enum CardInteractionState
+{
+    Active,    // Карта активна, можно взаимодействовать
+    Inactive,   // Карта неактивна, клики игнорируются
+    Hidden
+}
 
 public class Card : MonoBehaviour, IPointerClickHandler, IPointerEnterHandler, IPointerExitHandler
 {
     [Header("Параметры карты")]
-    public bool IsHidden = false;
-    public bool IsOpen = false;
-    protected bool currentIsOpen = false;
+    [SerializeField] private CardStatus status = CardStatus.Closed;
+
+    [SerializeField] private CardInteractionState _interactionState = CardInteractionState.Active;
+    public CardInteractionState InteractionState
+    {
+        get => _interactionState;
+        set
+        {
+            _interactionState = value;
+            UpdateVisibility();
+        }
+    }
     [SerializeField] protected bool SpecialRotation = false;
 
     [Header("Спрайты карты")]
@@ -17,14 +41,16 @@ public class Card : MonoBehaviour, IPointerClickHandler, IPointerEnterHandler, I
 
     [Header("Параметры анимации переворота")]
     [SerializeField] protected float flipDuration = 0.5f;
-    protected bool isFlipping = false;
 
     // Рендеры лицевой и обратной сторон
     protected SpriteRenderer frontRenderer;
     protected SpriteRenderer backRenderer;
     protected SpriteRenderer outlineRenderer;
 
-    protected virtual void Awake()
+    public List<Card> RelatedCardsHide = new List<Card>();
+    public List<Card> RelatedCardsOpen = new List<Card>();
+
+    void Awake()
     {
         frontRenderer = transform.Find("Front").GetComponent<SpriteRenderer>();
         backRenderer = transform.Find("Back").GetComponent<SpriteRenderer>();
@@ -32,33 +58,59 @@ public class Card : MonoBehaviour, IPointerClickHandler, IPointerEnterHandler, I
 
         frontRenderer.sprite = frontSprite;
         backRenderer.sprite = backSprite;
+    }
 
+    void Start()
+    {
         UpdateVisibility();
 
-        if (currentIsOpen != IsOpen)
+        UpdateRelatedCardsHide();
+    }
+
+    protected void UpdateRelatedCardsHide()
+    {
+        foreach (Card card in RelatedCardsHide)
         {
-            FlipCard();
+            if (status == CardStatus.Closed)
+                card.InteractionState = CardInteractionState.Hidden;
+            if (status == CardStatus.Opened)
+                card.InteractionState = CardInteractionState.Active;
         }
     }
 
-    // Переворот карты (вращение на 180° по оси Y)
+    protected void UpdateRelatedCardsOpen()
+    {
+        foreach (Card card in RelatedCardsOpen)
+        {
+            if (status == CardStatus.Opened)
+            {
+                card.InteractionState = CardInteractionState.Active;
+                card.FlipCard();
+            }
+            else
+            {
+                card.InteractionState = CardInteractionState.Hidden;
+                card.FlipCard();
+            }
+        }
+    }
+    
+
     protected void FlipCard()
     {
-        if (!isFlipping)
-        {
-            StartCoroutine(FlipAnimation());
-        }
+        if (status == CardStatus.Opening || status == CardStatus.Closing)
+            return;
+
+        status = (status == CardStatus.Closed) ? CardStatus.Opening : CardStatus.Closing;
+        StartCoroutine(FlipAnimation());
     }
 
     // Корутина для плавной анимации переворота
-    protected virtual IEnumerator FlipAnimation()
+    protected IEnumerator FlipAnimation()
     {
-        isFlipping = true;
-
         float elapsedTime = 0f;
         Quaternion startRotation = transform.rotation;
         Quaternion endRotation = startRotation * Quaternion.Euler(0, 180f, 0);
-
         if (SpecialRotation)
         {
             endRotation = endRotation * Quaternion.Euler(0, 0, 90f);
@@ -73,54 +125,47 @@ public class Card : MonoBehaviour, IPointerClickHandler, IPointerEnterHandler, I
         }
 
         transform.rotation = endRotation;
-        currentIsOpen = !currentIsOpen;
-        IsOpen = currentIsOpen;
-        // После переворота обновляем цвет outline в зависимости от состояния карты
+        status = (status == CardStatus.Opening) ? CardStatus.Opened : CardStatus.Closed;
+         
+        UpdateRelatedCardsHide();
+        UpdateRelatedCardsOpen();
         UpdateVisibility();
-        isFlipping = false;
     }
 
     public virtual void UpdateVisibility()
     {
-        if (IsHidden)
+        if (InteractionState == CardInteractionState.Hidden)
         {
-            // "Размытие": снижаем альфа для лицевой и обратной сторон
-            SetSpriteAlpha(frontRenderer, 0.3f);
-            SetSpriteAlpha(backRenderer, 0.3f);
-            // Отключаем Outline, делая его полностью прозрачным
-            SetSpriteAlpha(outlineRenderer, 0f);
+            SetSpriteAlpha(frontRenderer, 0.2f);
+            SetSpriteAlpha(backRenderer, 0.2f);
+            outlineRenderer.color = Color.grey;
         }
         else
         {
-            // В нормальном состоянии – альфа = 1
             SetSpriteAlpha(frontRenderer, 1f);
             SetSpriteAlpha(backRenderer, 1f);
-            // Outline: зеленый, если открыта, красный если закрыта
-            outlineRenderer.color = currentIsOpen ? Color.green : Color.red;
-            SetSpriteAlpha(outlineRenderer, 1f);
+            outlineRenderer.color = (status == CardStatus.Opened) ? Color.green : Color.red;
         }
     }
 
     protected void SetSpriteAlpha(SpriteRenderer sr, float alpha)
     {
-        Color c = sr.color;
+        var c = sr.color;
         c.a = alpha;
         sr.color = c;
     }
 
     // Обработка кликов
-    public virtual void OnPointerClick(PointerEventData eventData)
+    public void OnPointerClick(PointerEventData eventData)
     {
-        if (IsHidden)
+        if (InteractionState == CardInteractionState.Hidden)
             return;
 
-        // Левый клик => зум камеры (повторное нажатие — возврат)
         if (eventData.button == PointerEventData.InputButton.Left)
         {
             CameraController.Instance.ToggleZoom(transform.position);
         }
-        // Средний клик (колесико) => переворот карты
-        else if (eventData.button == PointerEventData.InputButton.Right)
+        else if (InteractionState == CardInteractionState.Active && eventData.button == PointerEventData.InputButton.Right)
         {
             FlipCard();
         }
@@ -128,9 +173,8 @@ public class Card : MonoBehaviour, IPointerClickHandler, IPointerEnterHandler, I
 
     public void OnPointerEnter(PointerEventData eventData)
     {
-        if (!IsHidden)
+        if (InteractionState != CardInteractionState.Hidden)
         {
-            // При наведении временно делаем Outline белым
             SetSpriteAlpha(outlineRenderer, 1f);
             outlineRenderer.color = Color.white;
         }
@@ -138,13 +182,9 @@ public class Card : MonoBehaviour, IPointerClickHandler, IPointerEnterHandler, I
 
     public void OnPointerExit(PointerEventData eventData)
     {
-        if (!IsHidden)
+        if (InteractionState != CardInteractionState.Hidden)
         {
-            // При уходе курсора восстанавливаем цвет Outline
-            outlineRenderer.color = currentIsOpen ? Color.green : Color.red;
+            UpdateVisibility();
         }
     }
-
-    protected void UpdateColorOutLine() => outlineRenderer.color = currentIsOpen ? Color.green : Color.red;
-
 }
