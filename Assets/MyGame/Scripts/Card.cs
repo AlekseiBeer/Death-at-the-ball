@@ -1,57 +1,48 @@
 using System.Collections;
+using Unity.VisualScripting;
 using UnityEngine;
 using UnityEngine.EventSystems;
 
 public class Card : MonoBehaviour, IPointerClickHandler, IPointerEnterHandler, IPointerExitHandler
 {
     [Header("Параметры карты")]
-    [SerializeField] private bool isHidden = false;
-    [SerializeField] private bool isOpen = false;
-
-    
+    public bool IsHidden = false;
+    public bool IsOpen = false;
+    protected bool currentIsOpen = false;
+    [SerializeField] protected bool SpecialRotation = false;
 
     [Header("Спрайты карты")]
-    public Sprite frontSprite;
-    public Sprite backSprite;
+    [SerializeField] protected Sprite frontSprite;
+    [SerializeField] protected Sprite backSprite;
 
     [Header("Параметры анимации переворота")]
-    [SerializeField] private float flipDuration = 0.5f;
-    private bool isFlipping = false;
-
-    [Header("Параметры зума камеры")]
-    [SerializeField] private float zoomDuration = 0.25f;
-    [SerializeField] private float zoomedSize = 10f;      
-    private bool isZoomed = false;
-    private bool isZooming = false;
-
-    private Camera mainCamera;
-    private float originalCameraSize;
-    private Vector3 originalCameraPosition;
+    [SerializeField] protected float flipDuration = 0.5f;
+    protected bool isFlipping = false;
 
     // Рендеры лицевой и обратной сторон
-    private SpriteRenderer frontRenderer;
-    private SpriteRenderer backRenderer;
+    protected SpriteRenderer frontRenderer;
+    protected SpriteRenderer backRenderer;
+    protected SpriteRenderer outlineRenderer;
 
-    void Awake()
+    protected virtual void Awake()
     {
         frontRenderer = transform.Find("Front").GetComponent<SpriteRenderer>();
         backRenderer = transform.Find("Back").GetComponent<SpriteRenderer>();
+        outlineRenderer = transform.Find("Outline").GetComponent<SpriteRenderer>();
 
         frontRenderer.sprite = frontSprite;
         backRenderer.sprite = backSprite;
 
-        mainCamera = Camera.main;
-        originalCameraSize = mainCamera.orthographicSize;
-        originalCameraPosition = mainCamera.transform.position;
+        UpdateVisibility();
 
-        if (!isOpen)
+        if (currentIsOpen != IsOpen)
         {
             FlipCard();
         }
     }
 
     // Переворот карты (вращение на 180° по оси Y)
-    private void FlipCard()
+    protected void FlipCard()
     {
         if (!isFlipping)
         {
@@ -60,13 +51,18 @@ public class Card : MonoBehaviour, IPointerClickHandler, IPointerEnterHandler, I
     }
 
     // Корутина для плавной анимации переворота
-    private IEnumerator FlipAnimation()
+    protected virtual IEnumerator FlipAnimation()
     {
         isFlipping = true;
 
         float elapsedTime = 0f;
         Quaternion startRotation = transform.rotation;
         Quaternion endRotation = startRotation * Quaternion.Euler(0, 180f, 0);
+
+        if (SpecialRotation)
+        {
+            endRotation = endRotation * Quaternion.Euler(0, 0, 90f);
+        }
 
         while (elapsedTime < flipDuration)
         {
@@ -77,86 +73,78 @@ public class Card : MonoBehaviour, IPointerClickHandler, IPointerEnterHandler, I
         }
 
         transform.rotation = endRotation;
-        isOpen = !isOpen;
+        currentIsOpen = !currentIsOpen;
+        IsOpen = currentIsOpen;
+        // После переворота обновляем цвет outline в зависимости от состояния карты
+        UpdateVisibility();
         isFlipping = false;
     }
 
-    private IEnumerator ZoomCameraCoroutine(float targetSize, Vector3 targetPos)
+    public virtual void UpdateVisibility()
     {
-        isZooming = true;
-
-        float startSize = mainCamera.orthographicSize;
-        Vector3 startPos = mainCamera.transform.position;
-        float elapsedTime = 0f;
-
-        while (elapsedTime < zoomDuration)
+        if (IsHidden)
         {
-            elapsedTime += Time.deltaTime;
-            float t = Mathf.Clamp01(elapsedTime / zoomDuration);
-
-            mainCamera.orthographicSize = Mathf.Lerp(startSize, targetSize, t);
-            mainCamera.transform.position = Vector3.Lerp(startPos, targetPos, t);
-
-            yield return null;
-        }
-
-        mainCamera.orthographicSize = targetSize;
-        mainCamera.transform.position = targetPos;
-
-        isZoomed = !isZoomed;
-        isZooming = false;
-    }
-
-    // Логика зума/возврата камеры
-    private void ToggleZoom()
-    {
-        if (mainCamera == null || isZooming) return;
-
-        if (!isZoomed)
-        {
-            // Конечные параметры
-            float targetSize = zoomedSize;
-            Vector3 targetPos = new Vector3(transform.position.x, transform.position.y, -10f);
-
-            StartCoroutine(ZoomCameraCoroutine(targetSize, targetPos));
+            // "Размытие": снижаем альфа для лицевой и обратной сторон
+            SetSpriteAlpha(frontRenderer, 0.3f);
+            SetSpriteAlpha(backRenderer, 0.3f);
+            // Отключаем Outline, делая его полностью прозрачным
+            SetSpriteAlpha(outlineRenderer, 0f);
         }
         else
         {
-            // Возвращаем в исходное состояние
-            float targetSize = originalCameraSize;
-            Vector3 targetPos = originalCameraPosition;
-
-            StartCoroutine(ZoomCameraCoroutine(targetSize, targetPos));
+            // В нормальном состоянии – альфа = 1
+            SetSpriteAlpha(frontRenderer, 1f);
+            SetSpriteAlpha(backRenderer, 1f);
+            // Outline: зеленый, если открыта, красный если закрыта
+            outlineRenderer.color = currentIsOpen ? Color.green : Color.red;
+            SetSpriteAlpha(outlineRenderer, 1f);
         }
     }
 
-    // Обработка кликов
-    public void OnPointerClick(PointerEventData eventData)
+    protected void SetSpriteAlpha(SpriteRenderer sr, float alpha)
     {
+        Color c = sr.color;
+        c.a = alpha;
+        sr.color = c;
+    }
+
+    // Обработка кликов
+    public virtual void OnPointerClick(PointerEventData eventData)
+    {
+        if (IsHidden)
+            return;
+
         // Левый клик => зум камеры (повторное нажатие — возврат)
         if (eventData.button == PointerEventData.InputButton.Left)
         {
-            ToggleZoom();
+            CameraController.Instance.ToggleZoom(transform.position);
         }
         // Средний клик (колесико) => переворот карты
-        else if (eventData.button == PointerEventData.InputButton.Middle)
+        else if (eventData.button == PointerEventData.InputButton.Right)
         {
             FlipCard();
         }
     }
 
-    // Подсветка при наведении курсора
     public void OnPointerEnter(PointerEventData eventData)
     {
-        // Пример: можно изменить цвет, добавить Outline и т.д.
-        // frontRenderer.color = Color.yellow;
-        // backRenderer.color = Color.yellow;
+        if (!IsHidden)
+        {
+            // При наведении временно делаем Outline белым
+            SetSpriteAlpha(outlineRenderer, 1f);
+            outlineRenderer.color = Color.white;
+        }
     }
 
     public void OnPointerExit(PointerEventData eventData)
     {
-        // Убираем подсветку
-        // frontRenderer.color = Color.white;
-        // backRenderer.color = Color.white;
+        if (!IsHidden)
+        {
+            // При уходе курсора восстанавливаем цвет Outline
+            outlineRenderer.color = currentIsOpen ? Color.green : Color.red;
+        }
     }
+
+    protected void UpdateColorOutLine() => outlineRenderer.color = currentIsOpen ? Color.green : Color.red;
+
 }
