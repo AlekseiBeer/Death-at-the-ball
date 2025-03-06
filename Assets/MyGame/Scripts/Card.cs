@@ -21,7 +21,8 @@ public enum CardInteractionState
 public class Card : MonoBehaviour, IPointerClickHandler, IPointerEnterHandler, IPointerExitHandler
 {
     [Header("Параметры карты")]
-    [SerializeField] private CardStatus status = CardStatus.Closed;
+    [SerializeField] private CardStatus _initialStatus = CardStatus.Closed;
+    [HideInInspector] public CardStatus status = CardStatus.Closed;
 
     [SerializeField] private CardInteractionState _interactionState = CardInteractionState.Active;
     public CardInteractionState InteractionState
@@ -29,11 +30,24 @@ public class Card : MonoBehaviour, IPointerClickHandler, IPointerEnterHandler, I
         get => _interactionState;
         set
         {
-            _interactionState = value;
-            UpdateVisibility();
+            if (_interactionState != value)
+            {
+                _interactionState = value;
+                UpdateVisibility();
+            }
         }
     }
     [SerializeField] protected bool SpecialRotation = false;
+
+    // Новые поля для локационной карты
+    [Header("Параметры локационной карты")]
+    public bool isLocationCard = false;
+    // Если isLocationCard == true, то при зуме целевая точка = transform.position + customZoomOffset
+    public Vector3 customZoomOffset = Vector3.zero;
+    public float customZoomSize = 14;
+
+    [Header("Параметры очков")]
+    public bool costsPoint = true;
 
     [Header("Спрайты карты")]
     [SerializeField] protected Sprite frontSprite;
@@ -49,6 +63,9 @@ public class Card : MonoBehaviour, IPointerClickHandler, IPointerEnterHandler, I
 
     public List<Card> RelatedCardsHide = new List<Card>();
     public List<Card> RelatedCardsOpen = new List<Card>();
+    public List<Card> CardActivator = new List<Card>();
+
+    [HideInInspector] public int NumAddictions = 0;
 
     void Awake()
     {
@@ -64,7 +81,28 @@ public class Card : MonoBehaviour, IPointerClickHandler, IPointerEnterHandler, I
     {
         UpdateVisibility();
 
+        if (status != _initialStatus)
+            FlipCard();
+
         UpdateRelatedCardsHide();
+    }
+
+    // Метод возвращает целевую точку зума. Если карта локационная – учитываем смещение.
+    public Vector3 GetZoomPosTarget() => isLocationCard ? transform.position + new Vector3(customZoomOffset.x - 1f, 0, 0) : transform.position;
+    private float GetZoomSizeTarget() => isLocationCard ? customZoomSize : 5.25f;
+
+    void Update()
+    {
+        if (InteractionState != CardInteractionState.Hidden)
+        {
+            foreach (Card card in CardActivator)
+            {
+                if (card.status == CardStatus.Closed)
+                    InteractionState = CardInteractionState.Inactive;
+                else
+                    InteractionState = CardInteractionState.Active;
+            }
+        }
     }
 
     protected void UpdateRelatedCardsHide()
@@ -85,12 +123,20 @@ public class Card : MonoBehaviour, IPointerClickHandler, IPointerEnterHandler, I
             if (status == CardStatus.Opened)
             {
                 card.InteractionState = CardInteractionState.Active;
-                card.FlipCard();
+                if (card.status == CardStatus.Closed)
+                {
+                    card.FlipCard();
+                }
+                card.NumAddictions++;
             }
             else
             {
-                card.InteractionState = CardInteractionState.Hidden;
-                card.FlipCard();
+                if (card.status == CardStatus.Opened && card.NumAddictions <= 1)
+                {
+                    card.InteractionState = CardInteractionState.Hidden;
+                    card.FlipCard();
+                }
+                card.NumAddictions--;
             }
         }
     }
@@ -99,6 +145,10 @@ public class Card : MonoBehaviour, IPointerClickHandler, IPointerEnterHandler, I
     protected void FlipCard()
     {
         if (status == CardStatus.Opening || status == CardStatus.Closing)
+            return;
+
+        // Если карта должна открываться, а уже нет открытий, не разрешаем переворот
+        if (status == CardStatus.Closed && costsPoint && !GameManager.Instance.CanOpenCard())
             return;
 
         status = (status == CardStatus.Closed) ? CardStatus.Opening : CardStatus.Closing;
@@ -126,7 +176,16 @@ public class Card : MonoBehaviour, IPointerClickHandler, IPointerEnterHandler, I
 
         transform.rotation = endRotation;
         status = (status == CardStatus.Opening) ? CardStatus.Opened : CardStatus.Closed;
-         
+
+        if (status == CardStatus.Opened && costsPoint)
+        {
+            GameManager.Instance.OnCardOpened(this);
+        }
+        if (status == CardStatus.Closed && costsPoint)
+        {
+            GameManager.Instance.OnCardClosed(this);
+        }
+
         UpdateRelatedCardsHide();
         UpdateRelatedCardsOpen();
         UpdateVisibility();
@@ -163,7 +222,8 @@ public class Card : MonoBehaviour, IPointerClickHandler, IPointerEnterHandler, I
 
         if (eventData.button == PointerEventData.InputButton.Left)
         {
-            CameraController.Instance.ToggleZoom(transform.position);
+            // Используем GetZoomTarget(), чтобы для локационной карты учесть кастомное смещение
+            CameraController.Instance.ToggleZoom(GetZoomPosTarget(), GetZoomSizeTarget());
         }
         else if (InteractionState == CardInteractionState.Active && eventData.button == PointerEventData.InputButton.Right)
         {
@@ -176,7 +236,7 @@ public class Card : MonoBehaviour, IPointerClickHandler, IPointerEnterHandler, I
         if (InteractionState != CardInteractionState.Hidden)
         {
             SetSpriteAlpha(outlineRenderer, 1f);
-            outlineRenderer.color = Color.white;
+            outlineRenderer.color = (InteractionState == CardInteractionState.Active) ? Color.white : Color.yellow;
         }
     }
 

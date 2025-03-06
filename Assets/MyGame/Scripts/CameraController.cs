@@ -1,6 +1,7 @@
 using System.Collections;
 using System.Collections.Generic;
 using UnityEngine;
+using Cinemachine;
 
 public enum CameraState
 {
@@ -35,7 +36,7 @@ public class CameraController : MonoBehaviour
 
     [Header("Параметры зума камеры")]
     [SerializeField] private float zoomDuration = 0.25f;
-    [SerializeField] private float zoomedSize = 5.25f;
+    [SerializeField] private const float zoomedSize = 5.25f;
 
     [Header("Параметры свободного перемещения")]
     [SerializeField] private float zoomScrollFactor = 10f;  // Фактор изменения zoom при прокрутке
@@ -43,8 +44,7 @@ public class CameraController : MonoBehaviour
     private float maxZoom;
     [SerializeField] private float zoomSpeed = 10f;         // Скорость интерполяции zoom
 
-
-    private Camera mainCamera;
+    private CinemachineVirtualCamera virtualCamera;
     private float originalCameraSize;
     private Vector3 originalCameraPosition;
 
@@ -72,13 +72,14 @@ public class CameraController : MonoBehaviour
             return;
         }
 
-        mainCamera = GetComponent<Camera>();
-        if (mainCamera == null)
+        virtualCamera = GetComponent<CinemachineVirtualCamera>();
+        if (virtualCamera == null)
         {
-            mainCamera = Camera.main;
+            Debug.LogError("CinemachineVirtualCamera не найден на объекте " + gameObject.name);
+            return;
         }
-        originalCameraSize = maxZoom = mainCamera.orthographicSize;
-        originalCameraPosition = mainCamera.transform.position;
+        originalCameraSize = maxZoom = virtualCamera.m_Lens.OrthographicSize;
+        originalCameraPosition = virtualCamera.transform.position;
         SetFullView();
     }
 
@@ -113,18 +114,19 @@ public class CameraController : MonoBehaviour
         {
             isPanning = true;
             PushCurrentState();
-            panOrigin = mainCamera.ScreenToWorldPoint(Input.mousePosition);
+            panOrigin = Camera.main.ScreenToWorldPoint(Input.mousePosition);
             CurrentStateInteraction = CameraStateInteraction.Busy;
         }
         if (Input.GetMouseButton(2) && isPanning)
         {
-            Vector3 currentMousePos = mainCamera.ScreenToWorldPoint(Input.mousePosition);
+            Vector3 currentMousePos = Camera.main.ScreenToWorldPoint(Input.mousePosition);
             Vector3 diff = panOrigin - currentMousePos;
-            mainCamera.transform.position += diff;
+            virtualCamera.transform.position += diff;
         }
         if (Input.GetMouseButtonUp(2))
         {
             CurrentStateInteraction = CameraStateInteraction.Free;
+            virtualCamera.transform.position = Camera.main.transform.position;
             isPanning = false;
         }
 
@@ -132,9 +134,21 @@ public class CameraController : MonoBehaviour
         float scroll = Input.GetAxis("Mouse ScrollWheel");
         if (Mathf.Abs(scroll) > 0.01f)
         {
-            float newSize = Mathf.Clamp(mainCamera.orthographicSize - scroll * zoomScrollFactor, minZoom, maxZoom);
-            // Плавное изменение размера камеры
-            mainCamera.orthographicSize = Mathf.Lerp(mainCamera.orthographicSize, newSize, Time.deltaTime * zoomSpeed);
+            // Вычисляем новый размер камеры
+            float newSize = Mathf.Clamp(virtualCamera.m_Lens.OrthographicSize - (scroll > 0 ? 1: -1) * zoomScrollFactor, minZoom, maxZoom);
+            virtualCamera.m_Lens.OrthographicSize = Mathf.Lerp(virtualCamera.m_Lens.OrthographicSize, newSize, Time.deltaTime * zoomSpeed);
+
+            if (scroll > 0)
+            {
+                // Получаем мировую позицию мыши из основной камеры
+                Vector3 mainCamPos = Camera.main.transform.position;
+                Vector3 mouseWorldPos = Camera.main.ScreenToWorldPoint(Input.mousePosition);
+                mouseWorldPos.z = virtualCamera.transform.position.z; // сохраняем z виртуальной камеры
+
+                // Плавно перемещаем виртуальную камеру от позиции основной камеры к позиции мыши
+                Vector3 newCamPos = Vector3.Lerp(mainCamPos, mouseWorldPos, Time.deltaTime * zoomSpeed);
+                virtualCamera.transform.position = newCamPos;
+            }
         }
     }
 
@@ -146,7 +160,7 @@ public class CameraController : MonoBehaviour
             stateHistory.RemoveAt(0);
         }
         // Добавляем новое состояние в конец списка (будет работать как стек)
-        stateHistory.Add(new CameraStateRecord(CurrentState, mainCamera.orthographicSize, mainCamera.transform.position));
+        stateHistory.Add(new CameraStateRecord(CurrentState, virtualCamera.m_Lens.OrthographicSize, virtualCamera.transform.position));
     }
 
     public void UndoLastAction()
@@ -160,16 +174,16 @@ public class CameraController : MonoBehaviour
         }
     }
 
-    public void ToggleZoom(Vector3 targetPosition)
+    public void ToggleZoom(Vector3 targetPosition, float targetSize = zoomedSize)
     {
         if (CurrentStateInteraction == CameraStateInteraction.Busy)
             return;
-        
+
         Vector3 newTarget = new Vector3(targetPosition.x, targetPosition.y, -10f);
-        
+
         if (CurrentState != CameraState.Zoomed)
         {
-            StartCoroutine(ZoomCameraCoroutine(zoomedSize, newTarget, CameraState.Zoomed));
+            StartCoroutine(ZoomCameraCoroutine(targetSize, newTarget, CameraState.Zoomed));
         }
         else
         {
@@ -179,7 +193,7 @@ public class CameraController : MonoBehaviour
             }
             else // Нажата другая карта – плавно перемещаемся к новой цели
             {
-                StartCoroutine(ZoomCameraCoroutine(zoomedSize, newTarget, CameraState.Zoomed, false));
+                StartCoroutine(ZoomCameraCoroutine(targetSize, newTarget, CameraState.Zoomed, false));
             }
         }
     }
@@ -191,8 +205,8 @@ public class CameraController : MonoBehaviour
 
         CurrentStateInteraction = CameraStateInteraction.Busy;
 
-        float startSize = mainCamera.orthographicSize;
-        Vector3 startPos = mainCamera.transform.position;
+        float startSize = virtualCamera.m_Lens.OrthographicSize;
+        Vector3 startPos = virtualCamera.transform.position;
         float elapsedTime = 0f;
 
         while (elapsedTime < zoomDuration)
@@ -200,15 +214,15 @@ public class CameraController : MonoBehaviour
             elapsedTime += Time.deltaTime;
             float t = Mathf.Clamp01(elapsedTime / zoomDuration);
 
-            mainCamera.orthographicSize = Mathf.Lerp(startSize, targetSize, t);
-            mainCamera.transform.position = Vector3.Lerp(startPos, targetPos, t);
+            virtualCamera.m_Lens.OrthographicSize = Mathf.Lerp(startSize, targetSize, t);
+            virtualCamera.transform.position = Vector3.Lerp(startPos, targetPos, t);
 
             yield return null;
         }
 
-        mainCamera.orthographicSize = targetSize;
-        mainCamera.transform.position = currentZoomTarget = targetPos;
-        
+        virtualCamera.m_Lens.OrthographicSize = targetSize;
+        virtualCamera.transform.position = currentZoomTarget = targetPos;
+
         CurrentState = newState;
         CurrentStateInteraction = CameraStateInteraction.Free;
     }

@@ -111,7 +111,7 @@ Transform:
   serializedVersion: 2
   m_LocalRotation: {x: 0, y: 0, z: 0, w: 1}
   m_LocalPosition: {x: 0, y: 0, z: 0}
-  m_LocalScale: {x: 1.0177, y: 1.011, z: 1.0177}
+  m_LocalScale: {x: 1.02, y: 1.02, z: 1.02}
   m_ConstrainProportionsScale: 0
   m_Children: []
   m_Father: {fileID: 8463482258004829690}
@@ -216,11 +216,16 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: ec179059f97d6ee4e92eb8f55621e7cf, type: 3}
   m_Name: 
   m_EditorClassIdentifier: 
-  IsHidden: 0
-  IsOpen: 0
+  status: 0
+  _interactionState: 0
+  SpecialRotation: 0
   frontSprite: {fileID: 0}
   backSprite: {fileID: 0}
   flipDuration: 0.5
+  RelatedCardsHide: []
+  RelatedCardsOpen: []
+  CardActivator: []
+  NumAddictions: 0
 --- !u!65 &4181307467652911986
 BoxCollider:
   m_ObjectHideFlags: 0
