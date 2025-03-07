@@ -7,7 +7,8 @@ public enum CameraState
 {
     FullView,   // Показывает всё игровое поле
     FreeMovement,       // Свободное перемещение камеры
-    Zoomed      // Приближена к выбранному объекту  
+    Zoomed,      // Приближена к выбранному объекту
+    ZoomedGroup
 }
 
 public enum CameraStateInteraction
@@ -134,8 +135,11 @@ public class CameraController : MonoBehaviour
         float scroll = Input.GetAxis("Mouse ScrollWheel");
         if (Mathf.Abs(scroll) > 0.01f)
         {
+            float currentSize = virtualCamera.m_Lens.OrthographicSize;
+            float multiplier = Mathf.InverseLerp(minZoom, maxZoom, currentSize);
+            if (scroll < 0) multiplier = Mathf.Max(0.05f ,multiplier);
             // Вычисляем новый размер камеры
-            float newSize = Mathf.Clamp(virtualCamera.m_Lens.OrthographicSize - (scroll > 0 ? 1: -1) * zoomScrollFactor, minZoom, maxZoom);
+            float newSize = Mathf.Clamp(virtualCamera.m_Lens.OrthographicSize - (scroll > 0 ? 1: -1) * zoomScrollFactor * multiplier, minZoom, maxZoom);
             virtualCamera.m_Lens.OrthographicSize = Mathf.Lerp(virtualCamera.m_Lens.OrthographicSize, newSize, Time.deltaTime * zoomSpeed);
 
             if (scroll > 0)
@@ -181,9 +185,16 @@ public class CameraController : MonoBehaviour
 
         Vector3 newTarget = new Vector3(targetPosition.x, targetPosition.y, -10f);
 
-        if (CurrentState != CameraState.Zoomed)
+        if (CurrentState != CameraState.Zoomed && CurrentState != CameraState.ZoomedGroup)
         {
-            StartCoroutine(ZoomCameraCoroutine(targetSize, newTarget, CameraState.Zoomed));
+            if (targetSize == zoomedSize)
+            {
+                StartCoroutine(ZoomCameraCoroutine(targetSize, newTarget, CameraState.Zoomed));
+            }
+            else
+            {
+                StartCoroutine(ZoomCameraCoroutine(targetSize, newTarget, CameraState.ZoomedGroup));
+            }
         }
         else
         {
@@ -193,7 +204,8 @@ public class CameraController : MonoBehaviour
             }
             else // Нажата другая карта – плавно перемещаемся к новой цели
             {
-                StartCoroutine(ZoomCameraCoroutine(targetSize, newTarget, CameraState.Zoomed, false));
+                bool needSave = CurrentState == CameraState.ZoomedGroup;
+                StartCoroutine(ZoomCameraCoroutine(targetSize, newTarget, CameraState.Zoomed, needSave));
             }
         }
     }
